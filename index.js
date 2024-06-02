@@ -1,12 +1,11 @@
-const express = require("express")
-const app = express()
-require('dotenv').config()
-const cors = require('cors')
-const cookieParser = require('cookie-parser')
-const bodyParser = require('body-parser')
-const admin = require('firebase-admin')
-
-const jwt = require('jsonwebtoken')
+const express = require("express");
+const app = express();
+require("dotenv").config();
+const cors = require("cors");
+const cookieParser = require("cookie-parser");
+const bodyParser = require("body-parser");
+const { MongoClient, ServerApiVersion } = require("mongodb");
+const jwt = require("jsonwebtoken");
 
 const port = process.env.PORT || 5000;
 
@@ -18,13 +17,13 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 
-app.use(express.json())
-app.use(cookieParser())
-app.use(express.static('public'))
-app.use(bodyParser.json())
+app.use(express.json());
+app.use(cookieParser());
+app.use(express.static("public"));
+app.use(bodyParser.json());
 
 // Verify Token Middleware
-const verifyToken = async (req, res, next) => {
+const verifyToken = (req, res, next) => {
   const token = req.cookies?.token;
   console.log(token);
   if (!token) {
@@ -40,10 +39,7 @@ const verifyToken = async (req, res, next) => {
   });
 };
 
-
-const { MongoClient, ServerApiVersion } = require("mongodb");
-const uri =
- `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.cibrnya.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
+const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.cibrnya.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
 const client = new MongoClient(uri, {
   serverApi: {
@@ -55,47 +51,53 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    const usersCollection = client.db("medcare").collection("users")
+    await client.connect();
+    const usersCollection = client.db("medcare").collection("users");
 
-
-
-    app.post('/save-user', async (req, res) => {
+    app.post("/save-user", async (req, res) => {
       try {
         const { uid, email, displayName, photoURL } = req.body;
+        if (!uid || !email) {
+          throw new Error("Missing required fields");
+        }
+
+        console.log("Received data:", { uid, email, displayName, photoURL });
+
         const userDoc = {
           uid,
           email,
           displayName,
           photoURL,
-          role: 'participants',
-        }
+          role: "participants",
+        };
 
         await usersCollection.updateOne(
           { uid: userDoc.uid },
           { $set: userDoc },
           { upsert: true }
         );
-        res.status(200).send({ message: 'User saved successfully' })
-      } catch (error) {
-        console.log(error)
-        res.status(500).send({ message: 'Error saving user' })
-      }
-    })
 
-    // await client.connect();
+        res.status(200).send({ message: "User saved successfully" });
+      } catch (error) {
+        console.log("Error in /save-user:", error);
+        res.status(500).send({ message: "Error saving user" });
+      }
+    });
+
     await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
     );
-  } finally { }
+  } catch (error) {
+    console.log("Error connecting to MongoDB:", error);
+  }
 }
 run().catch(console.dir);
 
-
-app.get('/', (req, res) => {
-  res.send('MedCare!')
-})
+app.get("/", (req, res) => {
+  res.send("MedCare!");
+});
 
 app.listen(port, () => {
-  console.log(`MedCare is running on port ${port}`)
-})
+  console.log(`MedCare is running on port ${port}`);
+});
