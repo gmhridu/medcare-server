@@ -39,6 +39,8 @@ const verifyToken = (req, res, next) => {
   });
 };
 
+
+
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.cibrnya.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
 const client = new MongoClient(uri, {
@@ -53,6 +55,38 @@ async function run() {
   try {
     await client.connect();
     const usersCollection = client.db("medcare").collection("users");
+    const campCollection = client.db("medcare").collection("camps");
+
+    // auth related api
+    app.post("/jwt", async (req, res) => {
+      const user = req.body;
+      const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
+        expiresIn: "365d",
+      });
+      res
+        .cookie("token", token, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === "production",
+          sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
+        })
+        .send({ success: true });
+    });
+
+    // Logout
+    app.get("/logout", async (req, res) => {
+      try {
+        res
+          .clearCookie("token", {
+            maxAge: 0,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
+          })
+          .send({ success: true });
+        console.log("Logout successful");
+      } catch (err) {
+        res.status(500).send(err);
+      }
+    });
 
     app.post("/save-user", async (req, res) => {
       try {
@@ -83,6 +117,24 @@ async function run() {
         res.status(500).send({ message: "Error saving user" });
       }
     });
+
+    // save a camp data in db
+    app.post('/camp', async (req, res) => {
+      const campData = req.body;
+      const result = await campCollection.insertOne(campData)
+      res.status(200).send(result)
+    })
+
+    // get all camps
+    app.get('/camps', async (req, res) => {
+      const category = req.params.category;
+      let query = {};
+      if (category && category !== "null") query = { category };
+      const result = await campCollection.find(query).toArray();
+      res.status(200).send(result)
+        
+    })
+
 
     await client.db("admin").command({ ping: 1 });
     console.log(
