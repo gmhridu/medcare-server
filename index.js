@@ -94,9 +94,6 @@ async function run() {
         if (!uid || !email) {
           throw new Error("Missing required fields");
         }
-
-        console.log("Received data:", { uid, email, displayName, photoURL });
-
         const userDoc = {
           uid,
           email,
@@ -113,7 +110,6 @@ async function run() {
 
         res.status(200).send({ message: "User saved successfully" });
       } catch (error) {
-        console.log("Error in /save-user:", error);
         res.status(500).send({ message: "Error saving user" });
       }
     });
@@ -126,14 +122,13 @@ async function run() {
     })
 
     // get all camps
-    app.get('/camps', async (req, res) => {
-      const category = req.params.category;
+    app.get("/camps", async (req, res) => {
+      const category = req.query.category;
       let query = {};
       if (category && category !== "null") query = { category };
       const result = await campCollection.find(query).toArray();
-      res.status(200).send(result)
-        
-    })
+      res.status(200).send(result);
+    });
 
 
     await client.db("admin").command({ ping: 1 });
