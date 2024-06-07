@@ -6,6 +6,7 @@ const cookieParser = require("cookie-parser");
 const bodyParser = require("body-parser");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const jwt = require("jsonwebtoken");
+const stripe = require("stripe")(process.env.STRIPE_SECRECT_KEY);
 
 const port = process.env.PORT || 5000;
 
@@ -188,6 +189,25 @@ async function run() {
     app.get("/user", verifyToken, async (req, res) => {
       const user = req.user;
       res.status(200).send(user);
+    });
+
+    app.post("/create-payment-intent",  async (req, res) => {
+      const fees = req.body.fees;
+
+      const priceInCent = parseFloat(fees * 100);
+
+      if (!fees || priceInCent < 1) return;
+      // generate clientSecret
+      const { client_secret } = await stripe.paymentIntents.create({
+        amount: priceInCent,
+        currency: "usd",
+        automatic_payment_methods: {
+          enabled: true,
+        },
+      });
+
+      // send client secret as response
+      res.send({ clientSecret: client_secret });
     });
 
     await client.db("admin").command({ ping: 1 });
