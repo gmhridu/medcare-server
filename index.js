@@ -115,11 +115,11 @@ async function run() {
     });
 
     // save a camp data in db
-    app.post('/camp', async (req, res) => {
+    app.post("/camp", async (req, res) => {
       const campData = req.body;
-      const result = await campCollection.insertOne(campData)
-      res.status(200).send(result)
-    })
+      const result = await campCollection.insertOne(campData);
+      res.status(200).send(result);
+    });
 
     // get all camps
     app.get("/camps", async (req, res) => {
@@ -137,27 +137,50 @@ async function run() {
       res.status(200).send({ count });
     });
 
-
     // get pagination
     app.get("/camps/pagination", async (req, res) => {
       const size = parseInt(req.query.size) || 8;
       const page = parseInt(req.query.page) || 1;
-      const filter = req.query.filter ? JSON.parse(req.query.filter) : {};
+      const category = req.query.category;
+
+      let filter = {};
+      if (category && category !== "null") {
+        filter = { category };
+      }
+
       const skip = (page - 1) * size;
       const camps = await campCollection
         .find(filter)
         .skip(skip)
         .limit(size)
         .toArray();
-      res.status(200).send(camps);
+
+      const count = await campCollection.countDocuments(filter);
+
+      res.status(200).send({ camps, count });
     });
 
+    // app.get("/camp/pagination", async (req, res) => {
+    //   const size = parseInt(req.query.size) || 8;
+    //   const page = parseInt(req.query.page) || 1;
+    //   const filter = req.query.filter ? JSON.parse(req.query.filter) : {};
+
+    //   const skip = (page - 1) * size;
+    //   const camps = await campCollection
+    //     .find(filter)
+    //     .skip(skip)
+    //     .limit(size)
+    //     .toArray();
+
+    //   const count = await campCollection.countDocuments(filter);
+
+    //   res.status(200).send({ camps, count });
+    // });
 
     app.get("/user", verifyToken, async (req, res) => {
       const user = req.user;
       res.status(200).send(user);
     });
-
 
     await client.db("admin").command({ ping: 1 });
     console.log(
