@@ -4,7 +4,7 @@ require("dotenv").config();
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const bodyParser = require("body-parser");
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const jwt = require("jsonwebtoken");
 
 const port = process.env.PORT || 5000;
@@ -159,6 +159,14 @@ async function run() {
 
       res.status(200).send({ camps, count });
     });
+
+    // get a single camp data from db using id
+    app.get("/camp/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await campCollection.findOne(query);
+      res.status(200).send(result);
+    })
 
     // app.get("/camp/pagination", async (req, res) => {
     //   const size = parseInt(req.query.size) || 8;
