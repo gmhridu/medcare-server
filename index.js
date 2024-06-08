@@ -6,7 +6,7 @@ const cookieParser = require("cookie-parser");
 const bodyParser = require("body-parser");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const jwt = require("jsonwebtoken");
-const stripe = require("stripe")(process.env.STRIPE_SECRECT_KEY);
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 const port = process.env.PORT || 5000;
 
@@ -17,7 +17,6 @@ const corsOptions = {
   optionSuccessStatus: 200,
 };
 app.use(cors(corsOptions));
-
 app.use(express.json());
 app.use(cookieParser());
 app.use(express.static("public"));
@@ -26,21 +25,17 @@ app.use(bodyParser.json());
 // Verify Token Middleware
 const verifyToken = (req, res, next) => {
   const token = req.cookies?.token;
-  console.log(token);
   if (!token) {
     return res.status(401).send({ message: "unauthorized access" });
   }
   jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
     if (err) {
-      console.log(err);
       return res.status(401).send({ message: "unauthorized access" });
     }
     req.user = decoded;
     next();
   });
 };
-
-
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.cibrnya.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
@@ -57,9 +52,10 @@ async function run() {
     await client.connect();
     const usersCollection = client.db("medcare").collection("users");
     const campCollection = client.db("medcare").collection("camps");
+    const joinCampCollection = client.db("medcare").collection("join-camp");
 
     // auth related api
-    app.post("/jwt", async (req, res) => {
+    app.post("/jwt", (req, res) => {
       const user = req.body;
       const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
         expiresIn: "365d",
@@ -74,45 +70,69 @@ async function run() {
     });
 
     // Logout
-    app.get("/logout", async (req, res) => {
-      try {
-        res
-          .clearCookie("token", {
-            maxAge: 0,
-            secure: process.env.NODE_ENV === "production",
-            sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
-          })
-          .send({ success: true });
-        console.log("Logout successful");
-      } catch (err) {
-        res.status(500).send(err);
-      }
+    app.get("/logout", (req, res) => {
+      res
+        .clearCookie("token", {
+          maxAge: 0,
+          secure: process.env.NODE_ENV === "production",
+          sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
+        })
+        .send({ success: true });
     });
 
-    app.post("/save-user", async (req, res) => {
-      try {
-        const { uid, email, displayName, photoURL } = req.body;
-        if (!uid || !email) {
-          throw new Error("Missing required fields");
+
+    // get user data from db
+    app.put("/user", async (req, res) => {
+      const user = req.body;
+      const query = { email: user?.email };
+      const isExist = await usersCollection.findOne({ email: user?.email });
+      if (isExist) {
+        if (user?.status === "Requested") {
+          const result = await usersCollection.updateOne(query, {
+            $set: { status: user?.status },
+          });
+          return res.send(result);
+        } else {
+          return res.send(isExist);
         }
-        const userDoc = {
-          uid,
-          email,
-          displayName,
-          photoURL,
-          role: "participants",
-        };
-
-        await usersCollection.updateOne(
-          { uid: userDoc.uid },
-          { $set: userDoc },
-          { upsert: true }
-        );
-
-        res.status(200).send({ message: "User saved successfully" });
-      } catch (error) {
-        res.status(500).send({ message: "Error saving user" });
       }
+      const options = { upsert: true };
+      const updateDoc = {
+        $set: {
+          ...user,
+          timestamp: Date.now(),
+        },
+      };
+      const result = await usersCollection.updateOne(query, updateDoc, options);
+      res.send(result);
+    });
+
+    // get a user info by email from db
+    app.get("/user/:email", async (req, res) => {
+      const email = req.params.email;
+      const result = await usersCollection.findOne({ email });
+      res.send(result);
+    });
+
+    // get all users data from db
+    app.get("/users", verifyToken, async (req, res) => {
+      const result = await usersCollection.find().toArray();
+      res.send(result);
+    });
+
+    // update a user role
+    app.patch("/users/update/:email", async (req, res) => {
+      const email = req.params.email;
+      const user = req.body;
+      const query = { email };
+      const updateDoc = {
+        $set: {
+          ...user,
+          timestamp: Date.now(),
+        },
+      };
+      const result = await usersCollection.updateOne(query, updateDoc);
+      res.send(result);
     });
 
     // save a camp data in db
@@ -143,21 +163,17 @@ async function run() {
       const size = parseInt(req.query.size) || 8;
       const page = parseInt(req.query.page) || 1;
       const category = req.query.category;
-
       let filter = {};
       if (category && category !== "null") {
         filter = { category };
       }
-
       const skip = (page - 1) * size;
       const camps = await campCollection
         .find(filter)
         .skip(skip)
         .limit(size)
         .toArray();
-
       const count = await campCollection.countDocuments(filter);
-
       res.status(200).send({ camps, count });
     });
 
@@ -167,37 +183,13 @@ async function run() {
       const query = { _id: new ObjectId(id) };
       const result = await campCollection.findOne(query);
       res.status(200).send(result);
-    })
-
-    // app.get("/camp/pagination", async (req, res) => {
-    //   const size = parseInt(req.query.size) || 8;
-    //   const page = parseInt(req.query.page) || 1;
-    //   const filter = req.query.filter ? JSON.parse(req.query.filter) : {};
-
-    //   const skip = (page - 1) * size;
-    //   const camps = await campCollection
-    //     .find(filter)
-    //     .skip(skip)
-    //     .limit(size)
-    //     .toArray();
-
-    //   const count = await campCollection.countDocuments(filter);
-
-    //   res.status(200).send({ camps, count });
-    // });
-
-    app.get("/user", verifyToken, async (req, res) => {
-      const user = req.user;
-      res.status(200).send(user);
     });
 
-    app.post("/create-payment-intent",  async (req, res) => {
+    // stripe payment integration
+    app.post("/create-payment-intent", async (req, res) => {
       const fees = req.body.fees;
-
       const priceInCent = parseFloat(fees * 100);
-
       if (!fees || priceInCent < 1) return;
-      // generate clientSecret
       const { client_secret } = await stripe.paymentIntents.create({
         amount: priceInCent,
         currency: "usd",
@@ -205,9 +197,36 @@ async function run() {
           enabled: true,
         },
       });
-
-      // send client secret as response
       res.send({ clientSecret: client_secret });
+    });
+
+    // join camp and save user as participant
+    app.post("/join-camp", verifyToken, async (req, res) => {
+      try {
+        const joinData = req.body;
+        const email = req.user.email;
+
+        // Insert joinData into the join-camp collection
+        const result = await joinCampCollection.insertOne(joinData);
+
+        // Update user role to participant
+        const updateUserResult = await usersCollection.updateOne(
+          { email: email },
+          { $set: { role: "participant" } }
+        );
+        res.status(200).send({
+          success: true,
+          message: "Joined camp successfully",
+          result,
+        });
+      } catch (error) {
+        console.error("Error joining camp:", error);
+        res.status(500).send({
+          success: false,
+          message: "Error joining camp",
+          error: error.message,
+        });
+      }
     });
 
     await client.db("admin").command({ ping: 1 });
@@ -218,6 +237,7 @@ async function run() {
     console.log("Error connecting to MongoDB:", error);
   }
 }
+
 run().catch(console.dir);
 
 app.get("/", (req, res) => {
