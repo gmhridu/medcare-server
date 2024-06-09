@@ -6,7 +6,7 @@ const cookieParser = require("cookie-parser");
 const bodyParser = require("body-parser");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const jwt = require("jsonwebtoken");
-const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+const stripe = require("stripe")(process.env.STRIPE_SECRECT_KEY);
 
 const port = process.env.PORT || 5000;
 
@@ -53,6 +53,7 @@ async function run() {
     const usersCollection = client.db("medcare").collection("users");
     const campCollection = client.db("medcare").collection("camps");
     const joinCampCollection = client.db("medcare").collection("join-camp");
+    const paymentCollection = client.db("medcare").collection("payments");
 
     // auth related api
     app.post("/jwt", (req, res) => {
@@ -80,7 +81,6 @@ async function run() {
         .send({ success: true });
     });
 
-
     // get user data from db
     app.put("/user", async (req, res) => {
       const user = req.body;
@@ -107,16 +107,16 @@ async function run() {
       res.send(result);
     });
 
+    // get all users data from db
+    app.get("/users", verifyToken, async (req, res) => {
+      const result = await usersCollection.find().toArray();
+      res.send(result);
+    });
+
     // get a user info by email from db
     app.get("/user/:email", async (req, res) => {
       const email = req.params.email;
       const result = await usersCollection.findOne({ email });
-      res.send(result);
-    });
-
-    // get all users data from db
-    app.get("/users", verifyToken, async (req, res) => {
-      const result = await usersCollection.find().toArray();
       res.send(result);
     });
 
@@ -185,19 +185,52 @@ async function run() {
       res.status(200).send(result);
     });
 
-    // stripe payment integration
+    // Stripe payment integration
     app.post("/create-payment-intent", async (req, res) => {
-      const fees = req.body.fees;
-      const priceInCent = parseFloat(fees * 100);
-      if (!fees || priceInCent < 1) return;
-      const { client_secret } = await stripe.paymentIntents.create({
-        amount: priceInCent,
-        currency: "usd",
-        automatic_payment_methods: {
-          enabled: true,
-        },
-      });
-      res.send({ clientSecret: client_secret });
+      try {
+        const fees = req.body.price; 
+        const priceInCent = parseFloat(fees * 100);
+        if (!fees || priceInCent < 1) {
+          return res.status(400).send({ error: "Invalid fees amount" });
+        }
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: priceInCent,
+          currency: "usd",
+          automatic_payment_methods: {
+            enabled: true,
+          },
+        });
+        res.send({ clientSecret: paymentIntent.client_secret });
+      } catch (error) {
+        console.error("Error creating payment intent:", error);
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    app.post("/payments", async (req, res) => {
+      try {
+        const paymentData = req.body;
+        const result = await paymentCollection.insertOne(paymentData);
+
+        if (result.insertedId) {
+          res.status(200).send(result);
+        } else {
+          res.status(500).send({ error: "Payment not inserted" });
+        }
+      } catch (error) {
+        console.error("Error handling payment post:", error);
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    app.get("/payment/:email", verifyToken, async (req, res) => {
+      const email = req.params.email;
+      const query = { email: email };
+      if (email !== req.decoded.email) {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+      const result = await paymentCollection.find(query).toArray();
+      res.send(result);
     });
 
     // join camp and save user as participant
@@ -206,10 +239,8 @@ async function run() {
         const joinData = req.body;
         const email = req.user.email;
 
-        // Insert joinData into the join-camp collection
         const result = await joinCampCollection.insertOne(joinData);
 
-        // Update user role to participant
         const updateUserResult = await usersCollection.updateOne(
           { email: email },
           { $set: { role: "participant" } }
