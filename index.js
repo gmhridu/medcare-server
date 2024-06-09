@@ -23,13 +23,15 @@ app.use(express.static("public"));
 app.use(bodyParser.json());
 
 // Verify Token Middleware
-const verifyToken = (req, res, next) => {
+const verifyToken = async (req, res, next) => {
   const token = req.cookies?.token;
+  console.log(token);
   if (!token) {
     return res.status(401).send({ message: "unauthorized access" });
   }
   jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
     if (err) {
+      console.log(err);
       return res.status(401).send({ message: "unauthorized access" });
     }
     req.user = decoded;
@@ -188,7 +190,7 @@ async function run() {
     // Stripe payment integration
     app.post("/create-payment-intent", async (req, res) => {
       try {
-        const fees = req.body.price; 
+        const fees = req.body.price;
         const priceInCent = parseFloat(fees * 100);
         if (!fees || priceInCent < 1) {
           return res.status(400).send({ error: "Invalid fees amount" });
@@ -210,6 +212,10 @@ async function run() {
     app.post("/payments", async (req, res) => {
       try {
         const paymentData = req.body;
+        if (paymentData._id) {
+          delete paymentData._id;
+        }
+
         const result = await paymentCollection.insertOne(paymentData);
 
         if (result.insertedId) {
@@ -223,14 +229,40 @@ async function run() {
       }
     });
 
-    app.get("/payment/:email", verifyToken, async (req, res) => {
+    app.get("/payment", verifyToken, async (req, res) => {
+      const result = await paymentCollection.find().toArray();
+      res.send(result);
+    });
+
+    app.get("/payments/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
-      const query = { email: email };
-      if (email !== req.decoded.email) {
+      if (email !== req.user.email) {
         return res.status(403).send({ message: "forbidden access" });
       }
+      const query = { email: email };
       const result = await paymentCollection.find(query).toArray();
       res.send(result);
+    });
+
+    // delete a payment by paymentMethodId
+    app.delete("/payments/:paymentMethodId", verifyToken, async (req, res) => {
+      try {
+        const paymentMethodId = req.params.paymentMethodId;
+        const query = { paymentMethodId: paymentMethodId }; 
+        const result = await paymentCollection.deleteOne(query);
+        res.status(200).send(result);
+      } catch (error) {
+        console.error("Error deleting payment:", error);
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // delete a camp
+    app.delete("/camp/:id", verifyToken, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await campCollection.deleteOne(query);
+      res.status(200).send(result);
     });
 
     // join camp and save user as participant
@@ -259,6 +291,21 @@ async function run() {
         });
       }
     });
+
+    app.get('/joinCamp', verifyToken, async (req, res) => {
+      const result = await joinCampCollection.find().toArray();
+      res.send(result)
+    })
+
+    app.get('/join-camps/:email', verifyToken, async (req, res) => {
+      const email = req.params.email;
+      if (email !== req.user.email) {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+      const query = { email: email };
+      const result = await joinCampCollection.find(query).toArray();
+      res.send(result)
+    })
 
     await client.db("admin").command({ ping: 1 });
     console.log(
