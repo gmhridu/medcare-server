@@ -25,7 +25,6 @@ app.use(bodyParser.json());
 // Verify Token Middleware
 const verifyToken = async (req, res, next) => {
   const token = req.cookies?.token;
-  console.log(token);
   if (!token) {
     return res.status(401).send({ message: "unauthorized access" });
   }
@@ -209,6 +208,7 @@ async function run() {
       }
     });
 
+    // save payments in db
     app.post("/payments", async (req, res) => {
       try {
         const paymentData = req.body;
@@ -248,7 +248,7 @@ async function run() {
     app.delete("/payments/:paymentMethodId", verifyToken, async (req, res) => {
       try {
         const paymentMethodId = req.params.paymentMethodId;
-        const query = { paymentMethodId: paymentMethodId }; 
+        const query = { paymentMethodId: paymentMethodId };
         const result = await paymentCollection.deleteOne(query);
         res.status(200).send(result);
       } catch (error) {
@@ -292,20 +292,58 @@ async function run() {
       }
     });
 
-    app.get('/joinCamp', verifyToken, async (req, res) => {
+    app.get("/joinCamp", verifyToken, async (req, res) => {
       const result = await joinCampCollection.find().toArray();
-      res.send(result)
-    })
+      res.send(result);
+    });
 
-    app.get('/join-camps/:email', verifyToken, async (req, res) => {
+    app.get("/join-camps/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
       if (email !== req.user.email) {
         return res.status(403).send({ message: "forbidden access" });
       }
       const query = { email: email };
       const result = await joinCampCollection.find(query).toArray();
-      res.send(result)
-    })
+      res.send(result);
+    });
+
+    // Add this endpoint in the backend code
+
+    app.patch(
+      "/payments/cancel/:paymentMethodId",
+      verifyToken,
+      async (req, res) => {
+        const paymentMethodId = req.params.paymentMethodId;
+
+        try {
+          // Update the payment status in the join-camp collection
+          const joinCampUpdateResult = await joinCampCollection.updateOne(
+            { paymentMethodId: paymentMethodId },
+            { $set: { status: "Canceled" } }
+          );
+
+          // Update the payment status in the paymentCollection
+          const paymentUpdateResult = await paymentCollection.updateOne(
+            { paymentMethodId: paymentMethodId },
+            { $set: { status: "Canceled" } }
+          );
+
+          if (
+            joinCampUpdateResult.modifiedCount > 0 &&
+            paymentUpdateResult.modifiedCount > 0
+          ) {
+            res
+              .status(200)
+              .send({ message: "Payment and camp status updated to Canceled" });
+          } else {
+            res.status(404).send({ message: "Payment method not found" });
+          }
+        } catch (error) {
+          console.error("Error canceling payment:", error);
+          res.status(500).send({ error: error.message });
+        }
+      }
+    );
 
     await client.db("admin").command({ ping: 1 });
     console.log(
