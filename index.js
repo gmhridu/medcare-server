@@ -152,6 +152,22 @@ async function run() {
       res.status(200).send(result);
     });
 
+    app.get('/camps/organizer/:email', verifyToken, async (req, res) => {
+      const organizerEmail = req.params.email;
+
+      if (organizerEmail !== req.user.email) {
+        return res.status(403).send({ message: "forbidden access" });
+      }
+      try {
+        const query = { "organizer.email": organizerEmail };
+        const result = await campCollection.find(query).toArray();
+        res.status(200).send(result);
+      } catch (error) {
+        console.error("Error fetching camps by organizer email:", error);
+        res.status(500).send({ error: error.message });
+      }
+    })
+
     // data count from db for pagination
     app.get("/camps/counts", async (req, res) => {
       const filter = req.query.filter ? JSON.parse(req.query.filter) : {};
@@ -229,11 +245,13 @@ async function run() {
       }
     });
 
+    // get all payments from db
     app.get("/payment", verifyToken, async (req, res) => {
       const result = await paymentCollection.find().toArray();
       res.send(result);
     });
 
+    // find payment by user email
     app.get("/payments/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
       if (email !== req.user.email) {
@@ -307,7 +325,7 @@ async function run() {
       res.send(result);
     });
 
-    // Add this endpoint in the backend code
+   
 
     app.patch(
       "/payments/cancel/:paymentMethodId",
@@ -316,13 +334,13 @@ async function run() {
         const paymentMethodId = req.params.paymentMethodId;
 
         try {
-          // Update the payment status in the join-camp collection
+         
           const joinCampUpdateResult = await joinCampCollection.updateOne(
             { paymentMethodId: paymentMethodId },
             { $set: { status: "Canceled" } }
           );
 
-          // Update the payment status in the paymentCollection
+         
           const paymentUpdateResult = await paymentCollection.updateOne(
             { paymentMethodId: paymentMethodId },
             { $set: { status: "Canceled" } }
