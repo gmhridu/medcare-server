@@ -152,7 +152,7 @@ async function run() {
       res.status(200).send(result);
     });
 
-    app.get('/camps/organizer/:email', verifyToken, async (req, res) => {
+    app.get("/camps/organizer/:email", verifyToken, async (req, res) => {
       const organizerEmail = req.params.email;
 
       if (organizerEmail !== req.user.email) {
@@ -166,7 +166,28 @@ async function run() {
         console.error("Error fetching camps by organizer email:", error);
         res.status(500).send({ error: error.message });
       }
-    })
+    });
+
+    // edit camp details
+    app.put("/camp/update/:id", verifyToken, async (req, res) => {
+      const id = req.params.id;
+      const { name, location, fees, healthcareProfessional, dateTime } = req.body;
+
+      const query = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: {
+          name,
+          location,
+          fees,
+          healthcareProfessional,
+          dateTime,
+          timestamp: Date.now(),
+        },
+      };
+      const result = await campCollection.updateOne(query, updateDoc);
+      res.status(200).send(result);
+    });
+
 
     // data count from db for pagination
     app.get("/camps/counts", async (req, res) => {
@@ -201,6 +222,14 @@ async function run() {
       const result = await campCollection.findOne(query);
       res.status(200).send(result);
     });
+
+    // delete a camp from db
+    app.delete('/camp/:id', verifyToken, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await campCollection.deleteOne(query);
+      res.status(200).send(result);
+    })
 
     // Stripe payment integration
     app.post("/create-payment-intent", async (req, res) => {
@@ -325,8 +354,6 @@ async function run() {
       res.send(result);
     });
 
-   
-
     app.patch(
       "/payments/cancel/:paymentMethodId",
       verifyToken,
@@ -334,13 +361,11 @@ async function run() {
         const paymentMethodId = req.params.paymentMethodId;
 
         try {
-         
           const joinCampUpdateResult = await joinCampCollection.updateOne(
             { paymentMethodId: paymentMethodId },
             { $set: { status: "Canceled" } }
           );
 
-         
           const paymentUpdateResult = await paymentCollection.updateOne(
             { paymentMethodId: paymentMethodId },
             { $set: { status: "Canceled" } }
