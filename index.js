@@ -5,7 +5,9 @@ const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const bodyParser = require("body-parser");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+
 const jwt = require("jsonwebtoken");
+
 const stripe = require("stripe")(process.env.STRIPE_SECRECT_KEY);
 
 const port = process.env.PORT || 5000;
@@ -171,7 +173,8 @@ async function run() {
     // edit camp details
     app.put("/camp/update/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
-      const { name, location, fees, healthcareProfessional, dateTime } = req.body;
+      const { name, location, fees, healthcareProfessional, dateTime } =
+        req.body;
 
       const query = { _id: new ObjectId(id) };
       const updateDoc = {
@@ -187,7 +190,6 @@ async function run() {
       const result = await campCollection.updateOne(query, updateDoc);
       res.status(200).send(result);
     });
-
 
     // data count from db for pagination
     app.get("/camps/counts", async (req, res) => {
@@ -224,12 +226,12 @@ async function run() {
     });
 
     // delete a camp from db
-    app.delete('/camp/:id', verifyToken, async (req, res) => {
+    app.delete("/camp/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
       const result = await campCollection.deleteOne(query);
       res.status(200).send(result);
-    })
+    });
 
     // Stripe payment integration
     app.post("/create-payment-intent", async (req, res) => {
@@ -312,22 +314,120 @@ async function run() {
       res.status(200).send(result);
     });
 
+    
+    // search 
+    app.get("/search", async (req, res) => {
+      try {
+        const { name, date, healthcareProfessional, category } = req.query;
+
+      
+        let query = {};
+        if ((name, date, healthcareProfessional, category)) {
+          query.name = { $regex: new RegExp(name, "i") };
+        }
+        if (date) {
+          query.dateTime = new Date(date);
+        }
+        if (healthcareProfessional) {
+          query["healthcareProfessional.name"] = {
+            $regex: new RegExp(healthcareProfessional, "i"),
+          };
+        }
+        if (category && category !== "null") {
+          query.category = category;
+        }
+
+       
+        const result = await campCollection.find(query).toArray();
+        res.status(200).send(result);
+      } catch (error) {
+        console.error("Error searching camps:", error);
+        res.status(500).send({ error: error.message });
+      }
+    });
+
     // join camp and save user as participant
+    const { ObjectId } = require("mongodb");
+
     app.post("/join-camp", verifyToken, async (req, res) => {
       try {
         const joinData = req.body;
         const email = req.user.email;
 
-        const result = await joinCampCollection.insertOne(joinData);
+        if (!email) {
+          return res
+            .status(400)
+            .send({ success: false, message: "Email is required" });
+        }
 
-        const updateUserResult = await usersCollection.updateOne(
-          { email: email },
-          { $set: { role: "participant" } }
+        const campId = joinData.campId;
+
+        if (!ObjectId.isValid(campId)) {
+          return res
+            .status(400)
+            .send({ success: false, message: "Invalid camp ID" });
+        }
+
+        const objectIdCampId = new ObjectId(campId);
+        const existingCamp = await campCollection.findOne({
+          _id: objectIdCampId,
+        });
+
+        if (!existingCamp) {
+          console.log(`Camp with ID ${campId} not found.`);
+          return res
+            .status(404)
+            .send({ success: false, message: "Camp not found" });
+        }
+
+        let participantCount = existingCamp.participantCount || 0;
+        participantCount++;
+
+        const updateCampResult = await campCollection.updateOne(
+          { _id: objectIdCampId },
+          { $set: { participantCount } }
         );
+
+        if (updateCampResult.modifiedCount !== 1) {
+          console.error(
+            "Failed to update camp participant count:",
+            updateCampResult
+          );
+          return res.status(500).send({
+            success: false,
+            message: "Failed to update camp participant count",
+          });
+        }
+
+        const joinCampResult = await joinCampCollection.insertOne(joinData);
+
+        if (!joinCampResult.acknowledged || !joinCampResult.insertedId) {
+          console.error("Failed to insert join camp data:", joinCampResult);
+          return res.status(500).send({
+            success: false,
+            message: "Failed to insert join camp data",
+          });
+        }
+
+        const user = await usersCollection.findOne({ email: email });
+        if (user.role !== "participant") {
+          const updateUserResult = await usersCollection.updateOne(
+            { email: email },
+            { $set: { role: "participant" } }
+          );
+
+          if (updateUserResult.modifiedCount !== 1) {
+            console.error("Failed to update user role:", updateUserResult);
+            return res
+              .status(500)
+              .send({ success: false, message: "Failed to update user role" });
+          }
+        }
+
         res.status(200).send({
           success: true,
           message: "Joined camp successfully",
-          result,
+          joinCampResult,
         });
       } catch (error) {
         console.error("Error joining camp:", error);
@@ -387,6 +487,58 @@ async function run() {
         }
       }
     );
+
+    app.patch("/join-camp/rate/:id", verifyToken, async (req, res) => {
+      const id = req.params.id;
+      const { rating, description } = req.body;
+
+      if (!rating || rating < 1 || rating > 5) {
+        return res.status(400).send({ message: "Invalid rating value" });
+      }
+
+      try {
+        const query = {
+          _id: new ObjectId(id),
+          participantEmail: req.user.email,
+        };
+        const updateDoc = {
+          $set: { rating: rating, description: description || "" },
+        };
+        const result = await joinCampCollection.updateOne(query, updateDoc);
+
+        if (result.modifiedCount > 0) {
+          const joinCampEntry = await joinCampCollection.findOne(query);
+          const campId = joinCampEntry.campId;
+
+          // Fetch all ratings for the camp
+          const allRatings = await joinCampCollection
+            .find({ campId: campId, rating: { $exists: true } })
+            .toArray();
+
+          // Calculate the new average rating
+          const totalRatings = allRatings.reduce(
+            (acc, item) => acc + item.rating,
+            0
+          );
+          const averageRating = totalRatings / allRatings.length;
+
+          const campQuery = { _id: new ObjectId(campId) };
+          const campUpdateDoc = {
+            $set: { averageRating: averageRating },
+          };
+          await campCollection.updateOne(campQuery, campUpdateDoc);
+
+          res
+            .status(200)
+            .send({ message: "Rating and description updated successfully" });
+        } else {
+          res.status(404).send({ message: "Join camp entry not found" });
+        }
+      } catch (error) {
+        console.error("Error updating rating and description:", error);
+        res.status(500).send({ error: error.message });
+      }
+    });
 
     await client.db("admin").command({ ping: 1 });
     console.log(
