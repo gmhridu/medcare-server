@@ -84,6 +84,29 @@ async function run() {
         .send({ success: true });
     });
 
+    // verify organizer middleware
+    const verifyOrganizer = async (req, res, next) => {
+      const user = req.user;
+      const query = { email: user?.email };
+      const result = await usersCollection.findOne(query);
+      if (!result || result?.role !== "organizer") {
+        return res.status(401).send({ message: "unauthorized access" });
+      }
+      next();
+    };
+
+    // verify participant middleware
+
+    const verifyParticipant = async (req, res, next) => {
+      const user = req.user;
+      const query = { email: user?.email };
+      const result = await usersCollection.findOne(query);
+      if (!result || result?.role !== "participant") {
+        return res.status(401).send({ message: "unauthorized access" });
+      }
+      next();
+    };
+
     // get user data from db
     app.put("/user", async (req, res) => {
       const user = req.body;
@@ -154,7 +177,7 @@ async function run() {
       res.status(200).send(result);
     });
 
-    app.get("/camps/organizer/:email", verifyToken, async (req, res) => {
+    app.get("/camps/organizer/:email", verifyToken, verifyOrganizer, async (req, res) => {
       const organizerEmail = req.params.email;
 
       if (organizerEmail !== req.user.email) {
@@ -171,7 +194,7 @@ async function run() {
     });
 
     // edit camp details
-    app.put("/camp/update/:id", verifyToken, async (req, res) => {
+    app.put("/camp/update/:id", verifyToken, verifyOrganizer, async (req, res) => {
       const id = req.params.id;
       const { name, location, fees, healthcareProfessional, dateTime } =
         req.body;
@@ -226,7 +249,7 @@ async function run() {
     });
 
     // delete a camp from db
-    app.delete("/camp/:id", verifyToken, async (req, res) => {
+    app.delete("/camp/:id", verifyToken, verifyOrganizer, async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
       const result = await campCollection.deleteOne(query);
@@ -283,7 +306,7 @@ async function run() {
     });
 
     // find payment by user email
-    app.get("/payments/:email", verifyToken, async (req, res) => {
+    app.get("/payments/:email", verifyToken, verifyParticipant, async (req, res) => {
       const email = req.params.email;
       if (email !== req.user.email) {
         return res.status(403).send({ message: "forbidden access" });
@@ -314,13 +337,11 @@ async function run() {
       res.status(200).send(result);
     });
 
-    
-    // search 
+    // search
     app.get("/search", async (req, res) => {
       try {
         const { name, date, healthcareProfessional, category } = req.query;
 
-      
         let query = {};
         if ((name, date, healthcareProfessional, category)) {
           query.name = { $regex: new RegExp(name, "i") };
@@ -337,7 +358,6 @@ async function run() {
           query.category = category;
         }
 
-       
         const result = await campCollection.find(query).toArray();
         res.status(200).send(result);
       } catch (error) {
@@ -488,61 +508,60 @@ async function run() {
       }
     );
 
-   app.patch("/join-camp/rate/:id", verifyToken, async (req, res) => {
-     const id = req.params.id;
-     const { rating, ratingText } = req.body;
+    app.patch("/join-camp/rate/:id", verifyToken, async (req, res) => {
+      const id = req.params.id;
+      const { rating, ratingText } = req.body;
 
-     if (!rating || rating < 1 || rating > 5) {
-       return res.status(400).send({ message: "Invalid rating value" });
-     }
+      if (!rating || rating < 1 || rating > 5) {
+        return res.status(400).send({ message: "Invalid rating value" });
+      }
 
-     try {
-       const query = {
-         _id: new ObjectId(id),
-         participantEmail: req.user.email,
-       };
-       const updateDoc = {
-         $set: {
-           rating: rating,
-           ratingText: ratingText || "",
-         },
-       };
-       const result = await joinCampCollection.updateOne(query, updateDoc);
+      try {
+        const query = {
+          _id: new ObjectId(id),
+          participantEmail: req.user.email,
+        };
+        const updateDoc = {
+          $set: {
+            rating: rating,
+            ratingText: ratingText || "",
+          },
+        };
+        const result = await joinCampCollection.updateOne(query, updateDoc);
 
-       if (result.modifiedCount > 0) {
-         const joinCampEntry = await joinCampCollection.findOne(query);
-         const campId = joinCampEntry.campId;
+        if (result.modifiedCount > 0) {
+          const joinCampEntry = await joinCampCollection.findOne(query);
+          const campId = joinCampEntry.campId;
 
-         // Fetch all ratings for the camp
-         const allRatings = await joinCampCollection
-           .find({ campId: campId, rating: { $exists: true } })
-           .toArray();
+          // Fetch all ratings for the camp
+          const allRatings = await joinCampCollection
+            .find({ campId: campId, rating: { $exists: true } })
+            .toArray();
 
-         // Calculate the new average rating
-         const totalRatings = allRatings.reduce(
-           (acc, item) => acc + item.rating,
-           0
-         );
-         const averageRating = totalRatings / allRatings.length;
+          // Calculate the new average rating
+          const totalRatings = allRatings.reduce(
+            (acc, item) => acc + item.rating,
+            0
+          );
+          const averageRating = totalRatings / allRatings.length;
 
-         const campQuery = { _id: new ObjectId(campId) };
-         const campUpdateDoc = {
-           $set: { averageRating: averageRating },
-         };
-         await campCollection.updateOne(campQuery, campUpdateDoc);
+          const campQuery = { _id: new ObjectId(campId) };
+          const campUpdateDoc = {
+            $set: { averageRating: averageRating },
+          };
+          await campCollection.updateOne(campQuery, campUpdateDoc);
 
-         res
-           .status(200)
-           .send({ message: "Rating and rating text updated successfully" });
-       } else {
-         res.status(404).send({ message: "Join camp entry not found" });
-       }
-     } catch (error) {
-       console.error("Error updating rating and rating text:", error);
-       res.status(500).send({ error: error.message });
-     }
-   });
-
+          res
+            .status(200)
+            .send({ message: "Rating and rating text updated successfully" });
+        } else {
+          res.status(404).send({ message: "Join camp entry not found" });
+        }
+      } catch (error) {
+        console.error("Error updating rating and rating text:", error);
+        res.status(500).send({ error: error.message });
+      }
+    });
 
     await client.db("admin").command({ ping: 1 });
     console.log(
